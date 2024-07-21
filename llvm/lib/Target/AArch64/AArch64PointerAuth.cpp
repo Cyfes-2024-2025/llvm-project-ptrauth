@@ -23,7 +23,7 @@ using namespace llvm::AArch64PAuth;
 #define AARCH64_POINTER_AUTH_NAME "AArch64 Pointer Authentication"
 
 namespace {
-
+    // classe che eredita da MachineFunctionPass
 class AArch64PointerAuth : public MachineFunctionPass {
 public:
   static char ID;
