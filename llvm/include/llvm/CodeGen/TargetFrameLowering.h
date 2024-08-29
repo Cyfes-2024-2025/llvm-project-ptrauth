@@ -27,7 +27,7 @@ namespace llvm {
 namespace TargetStackID {
 enum Value {
   Default = 0,
-  SGPRSpill = 1,
+  SGPRSpill = 1, // SGPR = scalar register
   ScalableVector = 2,
   WasmLocal = 3,
   NoAlloc = 255

@@ -235,6 +235,10 @@ using namespace llvm;
 
 #define DEBUG_TYPE "frame-info"
 
+#define ENABLE_NOP_INSERTION 0
+
+// ------------------------- Some command-line option intialization -------------------------
+
 static cl::opt<bool> EnableRedZone("aarch64-redzone",
                                    cl::desc("enable use of redzone on AArch64"),
                                    cl::init(false), cl::Hidden);
@@ -1033,6 +1037,14 @@ static Register findScratchNonCalleeSaveRegister(MachineBasicBlock *MBB) {
   return AArch64::NoRegister;
 }
 
+/// Check whether or not the given \p MBB can be used as a prologue
+/// for the target.
+/// The prologue will be inserted first in this basic block.
+/// This method is used by the shrink-wrapping pass to decide if
+/// \p MBB will be correctly handled by the target.
+/// As soon as the target enable shrink-wrapping without overriding
+/// this method, we assume that each basic block is a valid
+/// prologue.
 bool AArch64FrameLowering::canUseAsPrologue(
     const MachineBasicBlock &MBB) const {
   const MachineFunction *MF = MBB.getParent();
@@ -1678,6 +1690,13 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   // Debug location must be unknown since the first debug location is used
   // to determine the end of the prologue.
   DebugLoc DL;
+
+  if (ENABLE_NOP_INSERTION) {
+    // TODO: are we sure this shadow stack will not mess us up?
+    /***************************** HERE *****************************/
+    TII->insertNoop(MBB, MBBI);
+    /***************************** ---- *****************************/
+  }
 
   const auto &MFnI = *MF.getInfo<AArch64FunctionInfo>();
   if (MFnI.needsShadowCallStackPrologueEpilogue(MF))
@@ -2341,12 +2360,16 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
       BuildMI(MBB, LastPopI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
           .addCFIIndex(CFIIndex)
           .setMIFlags(MachineInstr::FrameDestroy);
+      if (ENABLE_NOP_INSERTION)
+        BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
     }
 
     emitFrameOffset(MBB, MBB.getFirstTerminator(), DL, AArch64::SP, AArch64::SP,
                     StackOffset::getFixed(NumBytes + (int64_t)AfterCSRPopSize),
                     TII, MachineInstr::FrameDestroy, false, NeedsWinCFI,
                     &HasWinCFI, EmitCFI, StackOffset::getFixed(NumBytes));
+    if (ENABLE_NOP_INSERTION)
+        BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
     return;
   }
 
@@ -2385,6 +2408,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
         emitFrameOffset(MBB, RestoreBegin, DL, AArch64::SP, AArch64::FP,
                         StackOffset::getScalable(-CalleeSavedSize), TII,
                         MachineInstr::FrameDestroy);
+        if (ENABLE_NOP_INSERTION)
+            BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
       }
     } else {
       if (AFI->getSVECalleeSavedStackSize()) {
@@ -2396,6 +2421,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
             false, false, nullptr, EmitCFI && !hasFP(MF),
             SVEStackSize + StackOffset::getFixed(NumBytes + PrologueSaveSize));
         NumBytes = 0;
+        if (ENABLE_NOP_INSERTION)
+            BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
       }
 
       emitFrameOffset(MBB, RestoreBegin, DL, AArch64::SP, AArch64::SP,
@@ -2403,16 +2430,25 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
                       false, nullptr, EmitCFI && !hasFP(MF),
                       SVEStackSize +
                           StackOffset::getFixed(NumBytes + PrologueSaveSize));
-
+      if (ENABLE_NOP_INSERTION)
+        BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
       emitFrameOffset(MBB, RestoreEnd, DL, AArch64::SP, AArch64::SP,
                       DeallocateAfter, TII, MachineInstr::FrameDestroy, false,
                       false, nullptr, EmitCFI && !hasFP(MF),
                       DeallocateAfter +
                           StackOffset::getFixed(NumBytes + PrologueSaveSize));
+      if (ENABLE_NOP_INSERTION)
+        BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
     }
     if (EmitCFI)
       emitCalleeSavedSVERestores(MBB, RestoreEnd);
+    // Sembra un punto prima delle eticchette .cfi
+    if (ENABLE_NOP_INSERTION)
+        BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
   }
+
+  if (ENABLE_NOP_INSERTION)
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
 
   if (!hasFP(MF)) {
     bool RedZone = canUseRedZone(MF);
@@ -2459,6 +2495,10 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
                     StackOffset::getFixed(NumBytes), TII,
                     MachineInstr::FrameDestroy, false, NeedsWinCFI, &HasWinCFI);
 
+  // Qua?
+  if (ENABLE_NOP_INSERTION)
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
+
   // When we are about to restore the CSRs, the CFA register is SP again.
   if (EmitCFI && hasFP(MF)) {
     const AArch64RegisterInfo &RegInfo = *Subtarget.getRegisterInfo();
@@ -2468,6 +2508,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
     BuildMI(MBB, LastPopI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex)
         .setMIFlags(MachineInstr::FrameDestroy);
+    if (ENABLE_NOP_INSERTION)
+        BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
   }
 
   // This must be placed after the callee-save restore code because that code
@@ -2482,7 +2524,12 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
         StackOffset::getFixed(AfterCSRPopSize), TII, MachineInstr::FrameDestroy,
         false, NeedsWinCFI, &HasWinCFI, EmitCFI,
         StackOffset::getFixed(CombineAfterCSRBump ? PrologueSaveSize : 0));
+    if (ENABLE_NOP_INSERTION)
+        BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
   }
+  // Ultima possibilità prima la fine della funzione
+  if (ENABLE_NOP_INSERTION)
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_Nop));
 }
 
 bool AArch64FrameLowering::enableCFIFixup(MachineFunction &MF) const {
