@@ -44,6 +44,7 @@
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Pass.h"
+#include "llvm/PassRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
@@ -260,6 +261,8 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAArch64Target() {
   initializeAArch64LowerHomogeneousPrologEpilogPass(*PR);
   initializeAArch64DAGToDAGISelPass(*PR);
   initializeAArch64GlobalsTaggingPass(*PR);
+  // PassRegistry &PassRegistry = *PassRegistry::getPassRegistry();
+  // initializeAArch64MachineInstrPrinterPass(PassRegistry);
 }
 
 //===----------------------------------------------------------------------===//
@@ -795,6 +798,8 @@ void AArch64PassConfig::addPreRegAlloc() {
   }
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableMachinePipeliner)
     addPass(&MachinePipelinerID);
+
+  // addPass(createAArch64MachineInstrPrinter());
 }
 
 void AArch64PassConfig::addPostRegAlloc() {
