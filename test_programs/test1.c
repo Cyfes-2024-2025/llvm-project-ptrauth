@@ -1,14 +1,16 @@
 int bar(int c);
 
+int test_var = 5;
+
 int foo(int a){
   int b = 5;
-  bar(b);
+  test_var = bar(b);
   return a + b;
 }
 
 int bar(int c) {
   int d = 6;
-  foo(d);
+  foo(d + test_var);
   return d + c;
 }
 

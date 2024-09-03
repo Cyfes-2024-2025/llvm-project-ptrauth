@@ -215,10 +215,12 @@
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/WinEHFuncInfo.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/Support/CommandLine.h"
@@ -239,12 +241,12 @@ using namespace llvm;
 #define DEBUG_TYPE "frame-info"
 
 #define CUSTOM_CFI 1
-#define DEV_BASE 0x10
 // The two offsets will be converted to a multiple of 8
 #define DEV_PLAIN_OFFSET 0x01
 #define DEV_CIPH_OFFSET 0x01
 
 static int Counter = 0;
+static int baseAddress;
 
 static cl::opt<bool> EnableRedZone("aarch64-redzone",
                                    cl::desc("enable use of redzone on AArch64"),
@@ -1698,53 +1700,8 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   // to determine the end of the prologue.
   DebugLoc DL;
 
-  if (CUSTOM_CFI) {
-    // TII->insertNoop(MBB, MBBI);
-    // mov x10, #DEV_BASE
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
-        .addReg(AArch64::X10)
-        .addImm(DEV_BASE)
-        .setMIFlag(MachineInstr::FrameSetup);
-    // mov x9, sp
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
-        .addReg(AArch64::SP)
-        .addImm(0)
-        .addImm(0)
-        .setMIFlag(MachineInstr::FrameSetup);
-    // 0:
-    std::string LabelName = std::to_string(Counter);
-    Counter++;
-    llvm::MCContext &Ctx = MF.getContext();
-    // To create an automatic label: llvm::MCSymbol *Label =
-    // Ctx.createTempSymbol();
-    llvm::MCSymbol *Label = Ctx.getOrCreateSymbol(LabelName);
-    BuildMI(MBB, MBBI, DL, TII->get(llvm::TargetOpcode::EH_LABEL))
-        .addSym(Label);
-    // stp lr, x9, [x10, #DEV_PLAIN_OFFSET]
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::STPXi))
-        .addReg(AArch64::LR)
-        .addReg(AArch64::X9)
-        .addReg(AArch64::X10)
-        .addImm(DEV_PLAIN_OFFSET)
-        .setMIFlag(MachineInstr::FrameSetup);
-    // ldr x11, [x10, #DEV_CIPH_OFFSET]
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
-        .addReg(AArch64::X11)
-        .addReg(AArch64::X10)
-        .addImm(DEV_CIPH_OFFSET)
-        .setMIFlag(MachineInstr::FrameSetup);
-    // cbz x11, label
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::CBZX))
-        .addReg(AArch64::X11)
-        .addSym(Label)
-        .setMIFlag(MachineInstr::FrameSetup);
-    // mov lr, x11
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ORRXrr), AArch64::LR)
-        .addReg(AArch64::XZR)
-        .addReg(AArch64::X11)
-        .setMIFlag(MachineInstr::FrameSetup);
-    /***************************** ---- *****************************/
-  }
+  readGlobalVariable(MBB);
+  peripheralSign(MBB, MBBI, DL, TII, MF);
 
   const auto &MFnI = *MF.getInfo<AArch64FunctionInfo>();
   if (MFnI.needsShadowCallStackPrologueEpilogue(MF))
@@ -2311,6 +2268,7 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
     // SP has been already adjusted while restoring callee save regs.
     // We've bailed-out the case with adjusting SP for arguments.
     assert(AfterCSRPopSize == 0);
+    // Valuta inserimento anche qua
     return;
   }
   bool CombineSPBump = shouldCombineCSRLocalStackBumpInEpilogue(MBB, NumBytes);
@@ -2421,51 +2379,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
                     StackOffset::getFixed(NumBytes + (int64_t)AfterCSRPopSize),
                     TII, MachineInstr::FrameDestroy, false, NeedsWinCFI,
                     &HasWinCFI, EmitCFI, StackOffset::getFixed(NumBytes));
-    if (CUSTOM_CFI) {
-      // mov x10, #DEV_BASE
-      BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
-          .addReg(AArch64::X10)
-          .addImm(DEV_BASE)
-          .setMIFlag(MachineInstr::FrameDestroy);
-      // mov x9, sp
-      BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
-          .addReg(AArch64::SP)
-          .addImm(0)
-          .addImm(0)
-          .setMIFlag(MachineInstr::FrameDestroy);
-      // 0:
-      std::string LabelName = std::to_string(Counter);
-      Counter++;
-      llvm::MCContext &Ctx = MF.getContext();
-      // To create an automatic label: llvm::MCSymbol *Label =
-      // Ctx.createTempSymbol();
-      llvm::MCSymbol *Label = Ctx.getOrCreateSymbol(LabelName);
-      BuildMI(MBB, MBBI, DL, TII->get(llvm::TargetOpcode::EH_LABEL))
-          .addSym(Label);
-      // stp lr, x9, [x10, #DEV_PLAIN_OFFSET]
-      BuildMI(MBB, MBBI, DL, TII->get(AArch64::STPXi))
-          .addReg(AArch64::X9)
-          .addReg(AArch64::LR)
-          .addReg(AArch64::X10)
-          .addImm(DEV_PLAIN_OFFSET)
-          .setMIFlag(MachineInstr::FrameDestroy);
-      // ldr x11, [x10, #DEV_CIPH_OFFSET]
-      BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
-          .addReg(AArch64::X11)
-          .addReg(AArch64::X10)
-          .addImm(DEV_CIPH_OFFSET)
-          .setMIFlag(MachineInstr::FrameDestroy);
-      // cbz x11, label
-      BuildMI(MBB, MBBI, DL, TII->get(AArch64::CBZX))
-          .addReg(AArch64::X11)
-          .addSym(Label)
-          .setMIFlag(MachineInstr::FrameDestroy);
-      // mov lr, x11
-      BuildMI(MBB, MBBI, DL, TII->get(AArch64::ORRXrr), AArch64::LR)
-          .addReg(AArch64::XZR)
-          .addReg(AArch64::X11)
-          .setMIFlag(MachineInstr::FrameDestroy);
-    }
+
+    peripheralAuth(MBB, MBBI, DL, TII, MF);
 
     return;
   }
@@ -4682,4 +4597,141 @@ void AArch64FrameLowering::inlineStackProbe(MachineFunction &MF,
     }
     MI->eraseFromParent();
   }
+}
+
+void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MBBI,
+                                          DebugLoc &DL,
+                                          const TargetInstrInfo *TII,
+                                          MachineFunction &MF) const {
+  if (CUSTOM_CFI) {
+    // mov x10, #DEV_BASE
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
+        .addReg(AArch64::X10)
+        .addImm(baseAddress)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // mov x9, sp
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
+        .addReg(AArch64::SP)
+        .addImm(0)
+        .addImm(0)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // 0:
+    std::string LabelName = std::to_string(Counter);
+    Counter++;
+    llvm::MCContext &Ctx = MF.getContext();
+    // To create an automatic label: llvm::MCSymbol *Label =
+    // Ctx.createTempSymbol();
+    llvm::MCSymbol *Label = Ctx.getOrCreateSymbol(LabelName);
+    BuildMI(MBB, MBBI, DL, TII->get(llvm::TargetOpcode::EH_LABEL))
+        .addSym(Label);
+    // stp lr, x9, [x10, #DEV_PLAIN_OFFSET]
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::STPXi))
+        .addReg(AArch64::LR)
+        .addReg(AArch64::X9)
+        .addReg(AArch64::X10)
+        .addImm(DEV_PLAIN_OFFSET)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // ldr x11, [x10, #DEV_CIPH_OFFSET]
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
+        .addReg(AArch64::X11)
+        .addReg(AArch64::X10)
+        .addImm(DEV_CIPH_OFFSET)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // cbz x11, label
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::CBZX))
+        .addReg(AArch64::X11)
+        .addSym(Label)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // mov lr, x11
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ORRXrr), AArch64::LR)
+        .addReg(AArch64::XZR)
+        .addReg(AArch64::X11)
+        .setMIFlag(MachineInstr::FrameDestroy);
+  }
+}
+
+void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MBBI,
+                                          DebugLoc &DL,
+                                          const TargetInstrInfo *TII,
+                                          MachineFunction &MF) const {
+  if (CUSTOM_CFI) {
+    // mov x10, #DEV_BASE
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
+        .addReg(AArch64::X10)
+        .addImm(baseAddress)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // mov x9, sp
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
+        .addReg(AArch64::SP)
+        .addImm(0)
+        .addImm(0)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // 0:
+    std::string LabelName = std::to_string(Counter);
+    Counter++;
+    llvm::MCContext &Ctx = MF.getContext();
+    // To create an automatic label: llvm::MCSymbol *Label =
+    // Ctx.createTempSymbol();
+    llvm::MCSymbol *Label = Ctx.getOrCreateSymbol(LabelName);
+    BuildMI(MBB, MBBI, DL, TII->get(llvm::TargetOpcode::EH_LABEL))
+        .addSym(Label);
+    // stp lr, x9, [x10, #DEV_PLAIN_OFFSET]
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::STPXi))
+        .addReg(AArch64::X9)
+        .addReg(AArch64::LR)
+        .addReg(AArch64::X10)
+        .addImm(DEV_PLAIN_OFFSET)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // ldr x11, [x10, #DEV_CIPH_OFFSET]
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
+        .addReg(AArch64::X11)
+        .addReg(AArch64::X10)
+        .addImm(DEV_CIPH_OFFSET)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // cbz x11, label
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::CBZX))
+        .addReg(AArch64::X11)
+        .addSym(Label)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // mov lr, x11
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ORRXrr), AArch64::LR)
+        .addReg(AArch64::XZR)
+        .addReg(AArch64::X11)
+        .setMIFlag(MachineInstr::FrameDestroy);
+  }
+}
+
+void AArch64FrameLowering::readGlobalVariable(MachineBasicBlock &MBB) const {
+    MachineFunction &MF = *MBB.getParent();
+    // Prendiamo le funzioni
+    const Function &F = MF.getFunction();
+    // E ora ci ricaviamo il modulo
+    const Module *M = F.getParent();
+
+    // Cerchiamo nel contesto la variabile globale "test_var"
+    GlobalVariable *GV = M->getGlobalVariable("test_var");
+    if (!GV) {
+        LLVM_DEBUG(dbgs() << "Global variable 'test_var' not found!\n");
+        return;
+    }
+
+    // Ci prendiamo l'intializer'
+    Constant *Initializer = GV->getInitializer();
+    if (!Initializer) {
+        LLVM_DEBUG(dbgs() << "Global variable 'globalVar' has no initializer!\n");
+        return;
+    }
+
+    // Cast the initializer to a constant integer
+    int64_t IntValue = 0;
+    if (ConstantInt *CI = dyn_cast<ConstantInt>(Initializer)) {
+        IntValue = CI->getSExtValue(); // getZExtValue() per unsigned
+        LLVM_DEBUG(dbgs() << "Value of 'globalVar' as integer: " << IntValue << "\n");
+    } else {
+        LLVM_DEBUG(dbgs() << "Initializer of 'globalVar' is not a constant integer!\n");
+    }
+
+    baseAddress = IntValue;
 }

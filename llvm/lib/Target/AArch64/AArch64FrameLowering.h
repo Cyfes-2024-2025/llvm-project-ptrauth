@@ -13,6 +13,7 @@
 #ifndef LLVM_LIB_TARGET_AARCH64_AARCH64FRAMELOWERING_H
 #define LLVM_LIB_TARGET_AARCH64_AARCH64FRAMELOWERING_H
 
+#include "AArch64InstrInfo.h"
 #include "llvm/Support/TypeSize.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
 
@@ -172,6 +173,15 @@ private:
   inlineStackProbeLoopExactMultiple(MachineBasicBlock::iterator MBBI,
                                     int64_t NegProbeSize,
                                     Register TargetReg) const;
+
+  void peripheralSign(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                   DebugLoc &DL, const TargetInstrInfo *TII, MachineFunction &MF) const;
+
+  void peripheralAuth(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                   DebugLoc &DL, const TargetInstrInfo *TII, MachineFunction &MF) const;
+
+  void readGlobalVariable(MachineBasicBlock &MBB) const;
+
 };
 
 } // End llvm namespace
