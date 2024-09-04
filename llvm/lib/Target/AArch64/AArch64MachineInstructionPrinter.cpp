@@ -15,7 +15,7 @@ public:
     static char ID;
 
     AArch64MachineInstrPrinter() : MachineFunctionPass(ID) {
-        // initializeAArch64MachineInstrPrinterPass(*PassRegistry::getPassRegistry());
+        initializeAArch64MachineInstrPrinterPass(*PassRegistry::getPassRegistry());
     }
 
     bool runOnMachineFunction(MachineFunction &MF) override;
@@ -40,14 +40,16 @@ bool AArch64MachineInstrPrinter::runOnMachineFunction(MachineFunction &MF) {
 
 } // end of anonymous namespace
 
-// INITIALIZE_PASS(AArch64MachineInstrPrinter, "AArch64-machineinstr-printer",
-//     AARCH64_MACHINEINSTR_PRINTER_PASS_NAME,
-//     true, // is CFG only?
-//     true  // is analysis?
-// )
+INITIALIZE_PASS(AArch64MachineInstrPrinter, "AArch64-machineinstr-printer",
+    AARCH64_MACHINEINSTR_PRINTER_PASS_NAME,
+    true, // is CFG only?
+    true  // is analysis?
+)
 
 namespace llvm {
 
-FunctionPass *createAArch64MachineInstrPrinterPass() { return new AArch64MachineInstrPrinter(); }
+FunctionPass *createAArch64MachineInstrPrinterPass() {
+    return new AArch64MachineInstrPrinter();
+}
 
 } // end namespace llvm

@@ -261,8 +261,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAArch64Target() {
   initializeAArch64LowerHomogeneousPrologEpilogPass(*PR);
   initializeAArch64DAGToDAGISelPass(*PR);
   initializeAArch64GlobalsTaggingPass(*PR);
-  // PassRegistry &PassRegistry = *PassRegistry::getPassRegistry();
-  // initializeAArch64MachineInstrPrinterPass(PassRegistry);
+  initializeAArch64MachineInstrPrinterPass(*PR);
 }
 
 //===----------------------------------------------------------------------===//
@@ -799,7 +798,7 @@ void AArch64PassConfig::addPreRegAlloc() {
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableMachinePipeliner)
     addPass(&MachinePipelinerID);
 
-  // addPass(createAArch64MachineInstrPrinter());
+  addPass(createAArch64MachineInstrPrinterPass());
 }
 
 void AArch64PassConfig::addPostRegAlloc() {

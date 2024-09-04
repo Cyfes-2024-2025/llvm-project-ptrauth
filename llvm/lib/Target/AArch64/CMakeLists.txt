@@ -30,6 +30,7 @@ tablegen(LLVM AArch64GenExegesis.inc -gen-exegesis)
 add_public_tablegen_target(AArch64CommonTableGen)
 
 add_llvm_target(AArch64CodeGen
+  AArch64MachineInstructionPrinter.cpp
   GISel/AArch64CallLowering.cpp
   GISel/AArch64GlobalISelUtils.cpp
   GISel/AArch64InstructionSelector.cpp
@@ -90,7 +91,6 @@ add_llvm_target(AArch64CodeGen
   SMEABIPass.cpp
   SVEIntrinsicOpts.cpp
   AArch64SIMDInstrOpt.cpp
-  AArch64MachineInstructionPrinter.cpp
 
   DEPENDS
   intrinsics_gen
