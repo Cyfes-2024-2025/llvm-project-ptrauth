@@ -230,6 +230,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
+#include <_types/_uint64_t.h>
 #include <cassert>
 #include <cstdint>
 #include <iterator>
@@ -246,7 +247,7 @@ using namespace llvm;
 #define DEV_CIPH_OFFSET 0x01
 
 static int Counter = 0;
-static int baseAddress;
+static uint64_t BaseAddress;
 
 static cl::opt<bool> EnableRedZone("aarch64-redzone",
                                    cl::desc("enable use of redzone on AArch64"),
@@ -4608,14 +4609,14 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
     // mov x10, #DEV_BASE
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
         .addReg(AArch64::X10)
-        .addImm(baseAddress)
-        .setMIFlag(MachineInstr::FrameDestroy);
+        .addImm(BaseAddress)
+        .setMIFlag(MachineInstr::FrameSetup);
     // mov x9, sp
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
         .addReg(AArch64::SP)
         .addImm(0)
         .addImm(0)
-        .setMIFlag(MachineInstr::FrameDestroy);
+        .setMIFlag(MachineInstr::FrameSetup);
     // 0:
     std::string LabelName = std::to_string(Counter);
     Counter++;
@@ -4631,23 +4632,23 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
         .addReg(AArch64::X9)
         .addReg(AArch64::X10)
         .addImm(DEV_PLAIN_OFFSET)
-        .setMIFlag(MachineInstr::FrameDestroy);
+        .setMIFlag(MachineInstr::FrameSetup);
     // ldr x11, [x10, #DEV_CIPH_OFFSET]
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
         .addReg(AArch64::X11)
         .addReg(AArch64::X10)
         .addImm(DEV_CIPH_OFFSET)
-        .setMIFlag(MachineInstr::FrameDestroy);
+        .setMIFlag(MachineInstr::FrameSetup);
     // cbz x11, label
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::CBZX))
         .addReg(AArch64::X11)
         .addSym(Label)
-        .setMIFlag(MachineInstr::FrameDestroy);
+        .setMIFlag(MachineInstr::FrameSetup);
     // mov lr, x11
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ORRXrr), AArch64::LR)
         .addReg(AArch64::XZR)
         .addReg(AArch64::X11)
-        .setMIFlag(MachineInstr::FrameDestroy);
+        .setMIFlag(MachineInstr::FrameSetup);
   }
 }
 
@@ -4660,7 +4661,7 @@ void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
     // mov x10, #DEV_BASE
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
         .addReg(AArch64::X10)
-        .addImm(baseAddress)
+        .addImm(BaseAddress)
         .setMIFlag(MachineInstr::FrameDestroy);
     // mov x9, sp
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
@@ -4710,10 +4711,10 @@ void AArch64FrameLowering::readGlobalVariable(MachineBasicBlock &MBB) const {
     // E ora ci ricaviamo il modulo
     const Module *M = F.getParent();
 
-    // Cerchiamo nel contesto la variabile globale "test_var"
-    GlobalVariable *GV = M->getGlobalVariable("test_var");
+    // Cerchiamo nel contesto la variabile globale "__global_ptrauth_device_base"
+    GlobalVariable *GV = M->getGlobalVariable("__global_ptrauth_device_base");
     if (!GV) {
-        LLVM_DEBUG(dbgs() << "Global variable 'test_var' not found!\n");
+        LLVM_DEBUG(dbgs() << "Global variable '__global_ptrauth_device_base' not found!\n");
         return;
     }
 
@@ -4725,13 +4726,13 @@ void AArch64FrameLowering::readGlobalVariable(MachineBasicBlock &MBB) const {
     }
 
     // Cast the initializer to a constant integer
-    int64_t IntValue = 0;
+    uint64_t AddressValue = 0;
     if (ConstantInt *CI = dyn_cast<ConstantInt>(Initializer)) {
-        IntValue = CI->getSExtValue(); // getZExtValue() per unsigned
-        LLVM_DEBUG(dbgs() << "Value of 'globalVar' as integer: " << IntValue << "\n");
+        AddressValue = CI->getSExtValue(); // getZExtValue() per unsigned
+        LLVM_DEBUG(dbgs() << "Value of 'globalVar' as integer: " << AddressValue << "\n");
     } else {
         LLVM_DEBUG(dbgs() << "Initializer of 'globalVar' is not a constant integer!\n");
     }
 
-    baseAddress = IntValue;
+    BaseAddress = AddressValue;
 }
