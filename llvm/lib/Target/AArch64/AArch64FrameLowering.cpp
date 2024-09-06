@@ -243,12 +243,13 @@ using namespace llvm;
 
 #define DEBUG_TYPE "frame-info"
 
+#define GLOBAL_VARNAME "__global_ptrauth_device_base"
 #define CUSTOM_CFI 1
 #define DEV_PLAIN_OFFSET 2
 #define DEV_CIPH_OFFSET 3
 
+// Used to generated the label number
 static int Counter = 0;
-static uint64_t BaseAddress;
 
 static cl::opt<bool> EnableRedZone("aarch64-redzone",
                                    cl::desc("enable use of redzone on AArch64"),
@@ -4614,61 +4615,43 @@ void AArch64FrameLowering::inlineStackProbe(MachineFunction &MF,
   }
 }
 
+GlobalVariable *
+AArch64FrameLowering::getGlobalVariable(const MachineFunction &MF) const {
+  const Function &F = MF.getFunction();
+  const Module *M = F.getParent();
+  return M->getGlobalVariable(GLOBAL_VARNAME);
+}
+
 void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
                                           MachineBasicBlock::iterator MBBI,
                                           DebugLoc &DL,
                                           const TargetInstrInfo *TII,
                                           MachineFunction &MF) const {
   if (CUSTOM_CFI) {
-    const Function &F = MF.getFunction();
-    const Module *M = F.getParent();
-    GlobalVariable *GV = M->getGlobalVariable("__global_ptrauth_device_base");
+    // Getting a pointer to the global variable
+    GlobalVariable *GV = getGlobalVariable(MF);
     assert(GV && "Global variable __global_ptrauth_device_base not found!");
-
-    // Debugging print
     llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
-    // Load the page address of the global variable into x9
+
+    // Load the "highest" parth of the global variable address (12 lsb's are at
+    // 0) into x10
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADRP))
-        .addReg(AArch64::X9)
+        .addReg(AArch64::X10)
         .addGlobalAddress(GV, 0)
         .setMIFlag(MachineInstr::FrameSetup);
-
-    llvm::dbgs() << "ADRP instruction added\n";
-
-    // // Add the offset within the page to x9
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
-        .addReg(AArch64::X9)
+    // Reading the last 12 bits and adding them to x10
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X10)
+        .addReg(AArch64::X10)
         .addGlobalAddress(GV, 0, AArch64II::MO_PAGEOFF | AArch64II::MO_NC)
         .addImm(0)
-        .addImm(0)
+        .addImm(0) // no shift, only god knows why
         .setMIFlag(MachineInstr::FrameSetup);
-
-    // llvm::dbgs() << "ADDXri instruction added\n";
-
-    // // Now you can use x0 to hold the address of __global_ptrauth_device_base
-    // // If you need to load the value from this address, you can add an LDR instruction
-    // BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
-    //     .addReg(AArch64::X10)
-    //     .addReg(AArch64::X9)
-    //     .addImm(0)
-    //     .setMIFlag(MachineInstr::FrameSetup);
-
-    // llvm::dbgs() << "LDRXui instruction added\n";
-
-    // // mov x10, #DEV_BASE
-    // BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
-    //     .addReg(AArch64::X10)
-    //     .addImm(BaseAddress)
-    //     .setMIFlag(MachineInstr::FrameDestroy);
     // mov x9, sp
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
         .addReg(AArch64::SP)
         .addImm(0)
         .addImm(0)
         .setMIFlag(MachineInstr::FrameSetup);
-
-    llvm::dbgs() << "mov x9, sp instruction added\n";
-
     // 0:
     std::string LabelName = std::to_string(Counter);
     Counter++;
@@ -4678,9 +4661,6 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
     llvm::MCSymbol *Label = Ctx.getOrCreateSymbol(LabelName);
     BuildMI(MBB, MBBI, DL, TII->get(llvm::TargetOpcode::EH_LABEL))
         .addSym(Label);
-
-    llvm::dbgs() << "label instruction added\n";
-
     // stp lr, x9, [x10, #DEV_PLAIN_OFFSET]
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::STPXi))
         .addReg(AArch64::LR)
@@ -4688,33 +4668,22 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
         .addReg(AArch64::X10)
         .addImm(DEV_PLAIN_OFFSET)
         .setMIFlag(MachineInstr::FrameSetup);
-
-    llvm::dbgs() << "stp lr, x9, [x10, #offset] instruction added\n";
-
     // ldr x11, [x10, #DEV_CIPH_OFFSET]
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
         .addReg(AArch64::X11)
         .addReg(AArch64::X10)
         .addImm(DEV_CIPH_OFFSET)
         .setMIFlag(MachineInstr::FrameSetup);
-
-    llvm::dbgs() << "ldr x11, [x10, #offset] instruction added\n";
-
     // cbz x11, label
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::CBZX))
         .addReg(AArch64::X11)
         .addSym(Label)
         .setMIFlag(MachineInstr::FrameSetup);
-
-    llvm::dbgs() << "cbz x11, label instruction added\n";
-
     // mov lr, x11
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ORRXrr), AArch64::LR)
         .addReg(AArch64::XZR)
         .addReg(AArch64::X11)
         .setMIFlag(MachineInstr::FrameSetup);
-
-    llvm::dbgs() << "mov lr, x11 instruction added\n";
   }
 }
 
@@ -4724,45 +4693,24 @@ void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
                                           const TargetInstrInfo *TII,
                                           MachineFunction &MF) const {
   if (CUSTOM_CFI) {
-      const Function &F = MF.getFunction();
-      const Module *M = F.getParent();
-      GlobalVariable *GV = M->getGlobalVariable("__global_ptrauth_device_base");
-      assert(GV && "Global variable __global_ptrauth_device_base not found!");
+    // Getting a pointer to the global variable
+    GlobalVariable *GV = getGlobalVariable(MF);
+    assert(GV && "Global variable __global_ptrauth_device_base not found!");
+    llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
 
-      // Debugging print
-      llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
-      // Load the page address of the global variable into x9
-      BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADRP))
-          .addReg(AArch64::X9)
-          .addGlobalAddress(GV, 0, AArch64MCExpr::VK_ABS_PAGE)
-          .setMIFlag(MachineInstr::FrameSetup);
-
-      // llvm::dbgs() << "ADRP instruction added\n";
-
-      // // Add the offset within the page to x9
-      // BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri))
-      //     .addReg(AArch64::X9)
-      //     .addReg(AArch64::X9)
-      //     .addGlobalAddress(GV, 0, AArch64MCExpr::VK_LO12)
-      //     .setMIFlag(MachineInstr::FrameSetup);
-
-      // llvm::dbgs() << "ADDXri instruction added\n";
-
-      // // Now you can use x0 to hold the address of __global_ptrauth_device_base
-      // // If you need to load the value from this address, you can add an LDR instruction
-      // BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
-      //     .addReg(AArch64::X10)
-      //     .addReg(AArch64::X9)
-      //     .addImm(0)
-      //     .setMIFlag(MachineInstr::FrameSetup);
-
-      // llvm::dbgs() << "LDRXui instruction added\n";
-
-    // // mov x10, #DEV_BASE
-    // BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
-    //     .addReg(AArch64::X10)
-    //     .addImm(BaseAddress)
-    //     .setMIFlag(MachineInstr::FrameDestroy);
+    // Load the "highest" parth of the global variable address (12 lsb's are at
+    // 0) into x10
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADRP))
+        .addReg(AArch64::X10)
+        .addGlobalAddress(GV, 0)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    // Reading the last 12 bits and adding them to x10
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X10)
+        .addReg(AArch64::X10)
+        .addGlobalAddress(GV, 0, AArch64II::MO_PAGEOFF | AArch64II::MO_NC)
+        .addImm(0)
+        .addImm(0) // no shift, only god knows why
+        .setMIFlag(MachineInstr::FrameDestroy);
     // mov x9, sp
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
         .addReg(AArch64::SP)
@@ -4802,41 +4750,4 @@ void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
         .addReg(AArch64::X11)
         .setMIFlag(MachineInstr::FrameDestroy);
   }
-}
-
-void AArch64FrameLowering::readGlobalVariable(MachineBasicBlock &MBB) const {
-  MachineFunction &MF = *MBB.getParent();
-  // Prendiamo le funzioni
-  const Function &F = MF.getFunction();
-  // E ora ci ricaviamo il modulo
-  const Module *M = F.getParent();
-
-  // Cerchiamo nel contesto la variabile globale "__global_ptrauth_device_base"
-  GlobalVariable *GV = M->getGlobalVariable("__global_ptrauth_device_base");
-  if (!GV) {
-    LLVM_DEBUG(
-        dbgs()
-        << "Global variable '__global_ptrauth_device_base' not found!\n");
-    return;
-  }
-
-  // Ci prendiamo l'intializer'
-  Constant *Initializer = GV->getInitializer();
-  if (!Initializer) {
-    LLVM_DEBUG(dbgs() << "Global variable 'globalVar' has no initializer!\n");
-    return;
-  }
-
-  // Cast the initializer to a constant integer
-  uint64_t AddressValue = 0;
-  if (ConstantInt *CI = dyn_cast<ConstantInt>(Initializer)) {
-    AddressValue = CI->getSExtValue(); // getZExtValue() per unsigned
-    LLVM_DEBUG(dbgs() << "Value of 'globalVar' as integer: " << AddressValue
-                      << "\n");
-  } else {
-    LLVM_DEBUG(
-        dbgs() << "Initializer of 'globalVar' is not a constant integer!\n");
-  }
-
-  BaseAddress = AddressValue;
 }

@@ -180,7 +180,7 @@ private:
   void peripheralAuth(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
                    DebugLoc &DL, const TargetInstrInfo *TII, MachineFunction &MF) const;
 
-  void readGlobalVariable(MachineBasicBlock &MBB) const;
+  GlobalVariable *getGlobalVariable(const MachineFunction &MF) const;
 
 };
 
