@@ -192,7 +192,9 @@
 #include "AArch64Subtarget.h"
 #include "AArch64TargetMachine.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
+#include "MCTargetDesc/AArch64MCExpr.h"
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
+#include "Utils/AArch64BaseInfo.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -1700,8 +1702,12 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   // to determine the end of the prologue.
   DebugLoc DL;
 
-  readGlobalVariable(MBB);
+  llvm::dbgs() << "calling peripheral sign\n";
+
+  // readGlobalVariable(MBB);
   peripheralSign(MBB, MBBI, DL, TII, MF);
+
+  llvm::dbgs() << "returned from peripheral sign\n";
 
   const auto &MFnI = *MF.getInfo<AArch64FunctionInfo>();
   if (MFnI.needsShadowCallStackPrologueEpilogue(MF))
@@ -1826,6 +1832,8 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
       BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_PrologEnd))
           .setMIFlag(MachineInstr::FrameSetup);
     }
+
+    llvm::dbgs() << "we are about to return from emit prologue\n";
 
     return;
   }
@@ -2454,8 +2462,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
     // If this was a redzone leaf function, we don't need to restore the
     // stack pointer (but we may need to pop stack args for fastcc).
     if (RedZone && AfterCSRPopSize == 0) {
-        peripheralAuth(MBB, MBBI, DL, TII, MF);
-        return;
+      peripheralAuth(MBB, MBBI, DL, TII, MF);
+      return;
     }
 
     // Pop the local variables off the stack. If there are no callee-saved
@@ -2476,8 +2484,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
     // If we were able to combine the local stack pop with the argument pop,
     // then we're done.
     if (NoCalleeSaveRestore || AfterCSRPopSize == 0) {
-        peripheralAuth(MBB, MBBI, DL, TII, MF);
-        return;
+      peripheralAuth(MBB, MBBI, DL, TII, MF);
+      return;
     }
 
     NumBytes = 0;
@@ -2523,6 +2531,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
   }
 
   peripheralAuth(MBB, MBBI, DL, TII, MF);
+  //
+  llvm::dbgs() << "returning from emitEpilogue \n";
 }
 
 bool AArch64FrameLowering::enableCFIFixup(MachineFunction &MF) const {
@@ -4610,17 +4620,55 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
                                           const TargetInstrInfo *TII,
                                           MachineFunction &MF) const {
   if (CUSTOM_CFI) {
-    // mov x10, #DEV_BASE
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
-        .addReg(AArch64::X10)
-        .addImm(BaseAddress)
+    const Function &F = MF.getFunction();
+    const Module *M = F.getParent();
+    GlobalVariable *GV = M->getGlobalVariable("__global_ptrauth_device_base");
+    assert(GV && "Global variable __global_ptrauth_device_base not found!");
+
+    // Debugging print
+    llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
+    // Load the page address of the global variable into x9
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADRP))
+        .addReg(AArch64::X9)
+        .addGlobalAddress(GV, 0)
         .setMIFlag(MachineInstr::FrameSetup);
+
+    llvm::dbgs() << "ADRP instruction added\n";
+
+    // // Add the offset within the page to x9
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
+        .addReg(AArch64::X9)
+        .addGlobalAddress(GV, 0, AArch64II::MO_PAGEOFF | AArch64II::MO_NC)
+        .addImm(0)
+        .addImm(0)
+        .setMIFlag(MachineInstr::FrameSetup);
+
+    // llvm::dbgs() << "ADDXri instruction added\n";
+
+    // // Now you can use x0 to hold the address of __global_ptrauth_device_base
+    // // If you need to load the value from this address, you can add an LDR instruction
+    // BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
+    //     .addReg(AArch64::X10)
+    //     .addReg(AArch64::X9)
+    //     .addImm(0)
+    //     .setMIFlag(MachineInstr::FrameSetup);
+
+    // llvm::dbgs() << "LDRXui instruction added\n";
+
+    // // mov x10, #DEV_BASE
+    // BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
+    //     .addReg(AArch64::X10)
+    //     .addImm(BaseAddress)
+    //     .setMIFlag(MachineInstr::FrameDestroy);
     // mov x9, sp
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
         .addReg(AArch64::SP)
         .addImm(0)
         .addImm(0)
         .setMIFlag(MachineInstr::FrameSetup);
+
+    llvm::dbgs() << "mov x9, sp instruction added\n";
+
     // 0:
     std::string LabelName = std::to_string(Counter);
     Counter++;
@@ -4630,6 +4678,9 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
     llvm::MCSymbol *Label = Ctx.getOrCreateSymbol(LabelName);
     BuildMI(MBB, MBBI, DL, TII->get(llvm::TargetOpcode::EH_LABEL))
         .addSym(Label);
+
+    llvm::dbgs() << "label instruction added\n";
+
     // stp lr, x9, [x10, #DEV_PLAIN_OFFSET]
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::STPXi))
         .addReg(AArch64::LR)
@@ -4637,22 +4688,33 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
         .addReg(AArch64::X10)
         .addImm(DEV_PLAIN_OFFSET)
         .setMIFlag(MachineInstr::FrameSetup);
+
+    llvm::dbgs() << "stp lr, x9, [x10, #offset] instruction added\n";
+
     // ldr x11, [x10, #DEV_CIPH_OFFSET]
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
         .addReg(AArch64::X11)
         .addReg(AArch64::X10)
         .addImm(DEV_CIPH_OFFSET)
         .setMIFlag(MachineInstr::FrameSetup);
+
+    llvm::dbgs() << "ldr x11, [x10, #offset] instruction added\n";
+
     // cbz x11, label
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::CBZX))
         .addReg(AArch64::X11)
         .addSym(Label)
         .setMIFlag(MachineInstr::FrameSetup);
+
+    llvm::dbgs() << "cbz x11, label instruction added\n";
+
     // mov lr, x11
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ORRXrr), AArch64::LR)
         .addReg(AArch64::XZR)
         .addReg(AArch64::X11)
         .setMIFlag(MachineInstr::FrameSetup);
+
+    llvm::dbgs() << "mov lr, x11 instruction added\n";
   }
 }
 
@@ -4662,11 +4724,45 @@ void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
                                           const TargetInstrInfo *TII,
                                           MachineFunction &MF) const {
   if (CUSTOM_CFI) {
-    // mov x10, #DEV_BASE
-    BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
-        .addReg(AArch64::X10)
-        .addImm(BaseAddress)
-        .setMIFlag(MachineInstr::FrameDestroy);
+      const Function &F = MF.getFunction();
+      const Module *M = F.getParent();
+      GlobalVariable *GV = M->getGlobalVariable("__global_ptrauth_device_base");
+      assert(GV && "Global variable __global_ptrauth_device_base not found!");
+
+      // Debugging print
+      llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
+      // Load the page address of the global variable into x9
+      BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADRP))
+          .addReg(AArch64::X9)
+          .addGlobalAddress(GV, 0, AArch64MCExpr::VK_ABS_PAGE)
+          .setMIFlag(MachineInstr::FrameSetup);
+
+      // llvm::dbgs() << "ADRP instruction added\n";
+
+      // // Add the offset within the page to x9
+      // BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri))
+      //     .addReg(AArch64::X9)
+      //     .addReg(AArch64::X9)
+      //     .addGlobalAddress(GV, 0, AArch64MCExpr::VK_LO12)
+      //     .setMIFlag(MachineInstr::FrameSetup);
+
+      // llvm::dbgs() << "ADDXri instruction added\n";
+
+      // // Now you can use x0 to hold the address of __global_ptrauth_device_base
+      // // If you need to load the value from this address, you can add an LDR instruction
+      // BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
+      //     .addReg(AArch64::X10)
+      //     .addReg(AArch64::X9)
+      //     .addImm(0)
+      //     .setMIFlag(MachineInstr::FrameSetup);
+
+      // llvm::dbgs() << "LDRXui instruction added\n";
+
+    // // mov x10, #DEV_BASE
+    // BuildMI(MBB, MBBI, DL, TII->get(AArch64::MOVi64imm))
+    //     .addReg(AArch64::X10)
+    //     .addImm(BaseAddress)
+    //     .setMIFlag(MachineInstr::FrameDestroy);
     // mov x9, sp
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
         .addReg(AArch64::SP)
@@ -4709,34 +4805,38 @@ void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
 }
 
 void AArch64FrameLowering::readGlobalVariable(MachineBasicBlock &MBB) const {
-    MachineFunction &MF = *MBB.getParent();
-    // Prendiamo le funzioni
-    const Function &F = MF.getFunction();
-    // E ora ci ricaviamo il modulo
-    const Module *M = F.getParent();
+  MachineFunction &MF = *MBB.getParent();
+  // Prendiamo le funzioni
+  const Function &F = MF.getFunction();
+  // E ora ci ricaviamo il modulo
+  const Module *M = F.getParent();
 
-    // Cerchiamo nel contesto la variabile globale "__global_ptrauth_device_base"
-    GlobalVariable *GV = M->getGlobalVariable("__global_ptrauth_device_base");
-    if (!GV) {
-        LLVM_DEBUG(dbgs() << "Global variable '__global_ptrauth_device_base' not found!\n");
-        return;
-    }
+  // Cerchiamo nel contesto la variabile globale "__global_ptrauth_device_base"
+  GlobalVariable *GV = M->getGlobalVariable("__global_ptrauth_device_base");
+  if (!GV) {
+    LLVM_DEBUG(
+        dbgs()
+        << "Global variable '__global_ptrauth_device_base' not found!\n");
+    return;
+  }
 
-    // Ci prendiamo l'intializer'
-    Constant *Initializer = GV->getInitializer();
-    if (!Initializer) {
-        LLVM_DEBUG(dbgs() << "Global variable 'globalVar' has no initializer!\n");
-        return;
-    }
+  // Ci prendiamo l'intializer'
+  Constant *Initializer = GV->getInitializer();
+  if (!Initializer) {
+    LLVM_DEBUG(dbgs() << "Global variable 'globalVar' has no initializer!\n");
+    return;
+  }
 
-    // Cast the initializer to a constant integer
-    uint64_t AddressValue = 0;
-    if (ConstantInt *CI = dyn_cast<ConstantInt>(Initializer)) {
-        AddressValue = CI->getSExtValue(); // getZExtValue() per unsigned
-        LLVM_DEBUG(dbgs() << "Value of 'globalVar' as integer: " << AddressValue << "\n");
-    } else {
-        LLVM_DEBUG(dbgs() << "Initializer of 'globalVar' is not a constant integer!\n");
-    }
+  // Cast the initializer to a constant integer
+  uint64_t AddressValue = 0;
+  if (ConstantInt *CI = dyn_cast<ConstantInt>(Initializer)) {
+    AddressValue = CI->getSExtValue(); // getZExtValue() per unsigned
+    LLVM_DEBUG(dbgs() << "Value of 'globalVar' as integer: " << AddressValue
+                      << "\n");
+  } else {
+    LLVM_DEBUG(
+        dbgs() << "Initializer of 'globalVar' is not a constant integer!\n");
+  }
 
-    BaseAddress = AddressValue;
+  BaseAddress = AddressValue;
 }
