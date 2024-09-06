@@ -250,6 +250,9 @@ using namespace llvm;
 
 // Used to generated the label number
 static int Counter = 0;
+// Used to know if the global variable address has already been loaded
+static bool GlobalVarLoaded = false;
+static GlobalVariable *GV;
 
 static cl::opt<bool> EnableRedZone("aarch64-redzone",
                                    cl::desc("enable use of redzone on AArch64"),
@@ -1703,12 +1706,8 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   // to determine the end of the prologue.
   DebugLoc DL;
 
-  llvm::dbgs() << "calling peripheral sign\n";
-
   // readGlobalVariable(MBB);
   peripheralSign(MBB, MBBI, DL, TII, MF);
-
-  llvm::dbgs() << "returned from peripheral sign\n";
 
   const auto &MFnI = *MF.getInfo<AArch64FunctionInfo>();
   if (MFnI.needsShadowCallStackPrologueEpilogue(MF))
@@ -1833,8 +1832,6 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
       BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_PrologEnd))
           .setMIFlag(MachineInstr::FrameSetup);
     }
-
-    llvm::dbgs() << "we are about to return from emit prologue\n";
 
     return;
   }
@@ -2532,8 +2529,6 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
   }
 
   peripheralAuth(MBB, MBBI, DL, TII, MF);
-  //
-  llvm::dbgs() << "returning from emitEpilogue \n";
 }
 
 bool AArch64FrameLowering::enableCFIFixup(MachineFunction &MF) const {
@@ -4628,11 +4623,13 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
                                           const TargetInstrInfo *TII,
                                           MachineFunction &MF) const {
   if (CUSTOM_CFI) {
-    // Getting a pointer to the global variable
-    GlobalVariable *GV = getGlobalVariable(MF);
-    assert(GV && "Global variable __global_ptrauth_device_base not found!");
-    llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
-
+    if (!GlobalVarLoaded) {
+        // Getting a pointer to the global variable
+        GV = getGlobalVariable(MF);
+        assert(GV && "Global variable __global_ptrauth_device_base not found!");
+        llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
+        GlobalVarLoaded = true;
+    }
     // Load the "highest" parth of the global variable address (12 lsb's are at
     // 0) into x10
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADRP))
@@ -4693,10 +4690,13 @@ void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
                                           const TargetInstrInfo *TII,
                                           MachineFunction &MF) const {
   if (CUSTOM_CFI) {
-    // Getting a pointer to the global variable
-    GlobalVariable *GV = getGlobalVariable(MF);
-    assert(GV && "Global variable __global_ptrauth_device_base not found!");
-    llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
+      if (!GlobalVarLoaded) {
+          // Getting a pointer to the global variable
+          GV = getGlobalVariable(MF);
+          assert(GV && "Global variable __global_ptrauth_device_base not found!");
+          llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
+          GlobalVarLoaded = true;
+      }
 
     // Load the "highest" parth of the global variable address (12 lsb's are at
     // 0) into x10
