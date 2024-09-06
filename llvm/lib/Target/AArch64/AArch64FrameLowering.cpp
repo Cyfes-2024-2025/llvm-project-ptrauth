@@ -242,9 +242,8 @@ using namespace llvm;
 #define DEBUG_TYPE "frame-info"
 
 #define CUSTOM_CFI 1
-// The two offsets will be converted to a multiple of 8
-#define DEV_PLAIN_OFFSET 0x01
-#define DEV_CIPH_OFFSET 0x01
+#define DEV_PLAIN_OFFSET 2
+#define DEV_CIPH_OFFSET 3
 
 static int Counter = 0;
 static uint64_t BaseAddress;
@@ -2269,7 +2268,7 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
     // SP has been already adjusted while restoring callee save regs.
     // We've bailed-out the case with adjusting SP for arguments.
     assert(AfterCSRPopSize == 0);
-    // Valuta inserimento anche qua
+    peripheralAuth(MBB, MBBI, DL, TII, MF);
     return;
   }
   bool CombineSPBump = shouldCombineCSRLocalStackBumpInEpilogue(MBB, NumBytes);
@@ -2454,8 +2453,10 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
     bool RedZone = canUseRedZone(MF);
     // If this was a redzone leaf function, we don't need to restore the
     // stack pointer (but we may need to pop stack args for fastcc).
-    if (RedZone && AfterCSRPopSize == 0)
-      return;
+    if (RedZone && AfterCSRPopSize == 0) {
+        peripheralAuth(MBB, MBBI, DL, TII, MF);
+        return;
+    }
 
     // Pop the local variables off the stack. If there are no callee-saved
     // registers, it means we are actually positioned at the terminator and can
@@ -2475,7 +2476,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
     // If we were able to combine the local stack pop with the argument pop,
     // then we're done.
     if (NoCalleeSaveRestore || AfterCSRPopSize == 0) {
-      return;
+        peripheralAuth(MBB, MBBI, DL, TII, MF);
+        return;
     }
 
     NumBytes = 0;
@@ -2519,6 +2521,8 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
         false, NeedsWinCFI, &HasWinCFI, EmitCFI,
         StackOffset::getFixed(CombineAfterCSRBump ? PrologueSaveSize : 0));
   }
+
+  peripheralAuth(MBB, MBBI, DL, TII, MF);
 }
 
 bool AArch64FrameLowering::enableCFIFixup(MachineFunction &MF) const {

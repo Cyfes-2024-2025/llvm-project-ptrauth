@@ -1,16 +1,16 @@
+#include <stdint.h>
+
 int bar(int c);
 
-int test_var = 5;
+uint64_t __global_ptrauth_device_base = 0x10;
 
 int foo(int a){
   int b = 5;
-  test_var = bar(b);
   return a + b;
 }
 
 int bar(int c) {
   int d = 6;
-  foo(d + test_var);
   return d + c;
 }
 

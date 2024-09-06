@@ -798,7 +798,7 @@ void AArch64PassConfig::addPreRegAlloc() {
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableMachinePipeliner)
     addPass(&MachinePipelinerID);
 
-  addPass(createAArch64MachineInstrPrinterPass());
+  // addPass(createAArch64MachineInstrPrinterPass());
 }
 
 void AArch64PassConfig::addPostRegAlloc() {
