@@ -84,6 +84,7 @@
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/JumpThreading.h"
+#include "llvm/Transforms/Utils/AddPtrauthGlobal.h"
 #include "llvm/Transforms/Utils/Debugify.h"
 #include "llvm/Transforms/Utils/EntryExitInstrumenter.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
@@ -1061,6 +1062,9 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
   // might even not run the analysis, if previous passes caused no changes.
   if (!actionRequiresCodeGen(Action) && CodeGenOpts.VerifyModule)
     MPM.addPass(VerifierPass());
+
+  // Add pass to add extern global variable for ptrauth implementation.
+  MPM.addPass(AddPtrauthGlobal());
 
   if (Action == Backend_EmitBC || Action == Backend_EmitLL ||
       CodeGenOpts.FatLTO) {

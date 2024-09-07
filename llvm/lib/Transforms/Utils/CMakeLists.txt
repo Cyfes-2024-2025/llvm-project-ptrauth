@@ -1,5 +1,6 @@
 add_llvm_component_library(LLVMTransformUtils
   JustForFun.cpp
+  AddPtrauthGlobal.cpp
   AddDiscriminators.cpp
   AMDGPUEmitPrintf.cpp
   ASanStackFrameLayout.cpp

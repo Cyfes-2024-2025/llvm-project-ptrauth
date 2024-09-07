@@ -233,7 +233,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
-#include <_types/_uint64_t.h>
 #include <cassert>
 #include <cstdint>
 #include <iterator>
@@ -4614,10 +4613,9 @@ void AArch64FrameLowering::inlineStackProbe(MachineFunction &MF,
 GlobalVariable *
 AArch64FrameLowering::getGlobalVariable(const MachineFunction &MF) const {
   const Function &F = MF.getFunction();
-  // const Module *M = F.getParent();
-  // return M->getGlobalVariable(GLOBAL_VARNAME);
-  GV = new GlobalVariable(Type::getInt32Ty(F.getContext())->getPointerTo(), false, GlobalValue::ExternalLinkage, nullptr);
-  return GV;
+  const Module *M = F.getParent();
+
+  return M->getGlobalVariable(GLOBAL_VARNAME, true);
 }
 
 void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
@@ -4632,6 +4630,7 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
         assert(GV && "Global variable __global_ptrauth_device_base not found!");
         llvm::dbgs() << "Global variable found: " << GV->getName() << "\n";
         GlobalVarLoaded = true;
+        llvm::dbgs() << "Global loaded!\n";
     }
     // Load the "highest" parth of the global variable address (12 lsb's are at
     // 0) into x10

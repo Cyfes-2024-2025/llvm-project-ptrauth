@@ -119,8 +119,7 @@ MODULE_PASS("pseudo-probe", SampleProfileProbePass(TM))
 MODULE_PASS("pseudo-probe-update", PseudoProbeUpdatePass())
 MODULE_PASS("recompute-globalsaa", RecomputeGlobalsAAPass())
 MODULE_PASS("rel-lookup-table-converter", RelLookupTableConverterPass())
-MODULE_PASS("rewrite-statepoints-for-gc", RewriteStatepointsForGC())
-MODULE_PASS("rewrite-symbols", RewriteSymbolPass())
+MODULE_PASS("rewrite-statepoints-for-gc", RewriteStatepointsForGC()) MODULE_PASS("rewrite-symbols", RewriteSymbolPass())
 MODULE_PASS("rpo-function-attrs", ReversePostOrderFunctionAttrsPass())
 MODULE_PASS("sample-profile", SampleProfileLoaderPass())
 MODULE_PASS("sancov-module", SanitizerCoveragePass())
@@ -142,6 +141,7 @@ MODULE_PASS("tsan-module", ModuleThreadSanitizerPass())
 MODULE_PASS("verify", VerifierPass())
 MODULE_PASS("view-callgraph", CallGraphViewerPass())
 MODULE_PASS("wholeprogramdevirt", WholeProgramDevirtPass())
+MODULE_PASS("add-ptrauth-global", AddPtrauthGlobal())
 #undef MODULE_PASS
 
 #ifndef MODULE_PASS_WITH_PARAMS
