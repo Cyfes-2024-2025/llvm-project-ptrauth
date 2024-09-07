@@ -223,6 +223,7 @@
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Type.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/Support/CommandLine.h"
@@ -4613,8 +4614,10 @@ void AArch64FrameLowering::inlineStackProbe(MachineFunction &MF,
 GlobalVariable *
 AArch64FrameLowering::getGlobalVariable(const MachineFunction &MF) const {
   const Function &F = MF.getFunction();
-  const Module *M = F.getParent();
-  return M->getGlobalVariable(GLOBAL_VARNAME);
+  // const Module *M = F.getParent();
+  // return M->getGlobalVariable(GLOBAL_VARNAME);
+  GV = new GlobalVariable(Type::getInt32Ty(F.getContext())->getPointerTo(), false, GlobalValue::ExternalLinkage, nullptr);
+  return GV;
 }
 
 void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
