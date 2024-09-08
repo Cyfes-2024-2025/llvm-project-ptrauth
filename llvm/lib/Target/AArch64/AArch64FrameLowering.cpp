@@ -246,7 +246,8 @@ using namespace llvm;
 #define GLOBAL_VARNAME "__global_ptrauth_device_base"
 #define CUSTOM_CFI 1
 #define DEV_PLAIN_OFFSET 2
-#define DEV_CIPH_OFFSET 3
+#define DEV_TWEAK_OFFSET 3
+#define DEV_CIPH_OFFSET 4
 
 // Used to generated the label number
 static int Counter = 0;
@@ -4645,6 +4646,14 @@ void AArch64FrameLowering::peripheralSign(MachineBasicBlock &MBB,
         .addImm(0)
         .addImm(0) // no shift, only god knows why
         .setMIFlag(MachineInstr::FrameSetup);
+
+    // ldr x10, [x10]
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
+        .addReg(AArch64::X10)
+        .addReg(AArch64::X10)
+        .addImm(0)
+        .setMIFlag(MachineInstr::FrameSetup);
+
     // mov x9, sp
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
         .addReg(AArch64::SP)
@@ -4713,6 +4722,12 @@ void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
         .addImm(0)
         .addImm(0) // no shift, only god knows why
         .setMIFlag(MachineInstr::FrameDestroy);
+    // ldr x10, [x10]
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
+        .addReg(AArch64::X10)
+        .addReg(AArch64::X10)
+        .addImm(0)
+        .setMIFlag(MachineInstr::FrameSetup);
     // mov x9, sp
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), AArch64::X9)
         .addReg(AArch64::SP)
@@ -4728,12 +4743,12 @@ void AArch64FrameLowering::peripheralAuth(MachineBasicBlock &MBB,
     llvm::MCSymbol *Label = Ctx.getOrCreateSymbol(LabelName);
     BuildMI(MBB, MBBI, DL, TII->get(llvm::TargetOpcode::EH_LABEL))
         .addSym(Label);
-    // stp lr, x9, [x10, #DEV_PLAIN_OFFSET]
+    // stp lr, x9, [x10, #DEV_TWEAK_OFFSET]
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::STPXi))
         .addReg(AArch64::X9)
         .addReg(AArch64::LR)
         .addReg(AArch64::X10)
-        .addImm(DEV_PLAIN_OFFSET)
+        .addImm(DEV_TWEAK_OFFSET)
         .setMIFlag(MachineInstr::FrameDestroy);
     // ldr x11, [x10, #DEV_CIPH_OFFSET]
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDRXui))
