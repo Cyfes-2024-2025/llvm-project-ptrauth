@@ -2,8 +2,6 @@
 
 int bar(int c);
 
-volatile void* __global_ptrauth_device_base;
-
 int foo(int a) {
   int b = 5;
   printf("Hello from foo\n");
